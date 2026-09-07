@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# fpgagpu-clang: Driver script compiling C/C++ kernels to FPGA-GPU machine code
+# ==============================================================================
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+LLC_BIN="${ROOT_DIR}/build/fpgagpu-llc"
+RUNTIME_DIR="${ROOT_DIR}/runtime"
+
+if [ ! -f "${LLC_BIN}" ]; then
+    echo "Error: fpgagpu-llc binary not found at ${LLC_BIN}."
+    echo "Please build the compiler first: cd ${ROOT_DIR}/build && make"
+    exit 1
+fi
+
+CLANG_BIN=$(which clang-18 || which clang || true)
+if [ -z "${CLANG_BIN}" ]; then
+    echo "Error: clang compiler not found in PATH."
+    exit 1
+fi
+
+# Argument parsing
+INPUT_FILE=""
+OUTPUT_FILE=""
+OPT_LEVEL="-O2"
+EMIT_FORMAT="-x" # default to hex
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -S|--emit-asm)
+            EMIT_FORMAT="-S"
+            shift
+            ;;
+        -x|--emit-hex)
+            EMIT_FORMAT="-x"
+            shift
+            ;;
+        -b|--emit-bin)
+            EMIT_FORMAT="-b"
+            shift
+            ;;
+        -O0|-O1|-O2|-O3)
+            OPT_LEVEL="$1"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: fpgagpu-clang [options] <input.c>"
+            echo ""
+            echo "Options:"
+            echo "  -o <file>          Output file name (.hex, .s, or .bin)"
+            echo "  -S, --emit-asm     Emit human-readable assembly (.s)"
+            echo "  -x, --emit-hex     Emit hex machine code (.hex, default)"
+            echo "  -b, --emit-bin     Emit raw binary machine code (.bin)"
+            echo "  -O0, -O1, -O2, -O3 Optimization level (default: -O2)"
+            echo "  -h, --help         Show this help message"
+            exit 0
+            ;;
+        *)
+            if [ -z "${INPUT_FILE}" ] && [[ "$1" != -* ]]; then
+                INPUT_FILE="$1"
+            else
+                EXTRA_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "${INPUT_FILE}" ]; then
+    echo "Error: No input file specified."
+    exit 1
+fi
+
+if [ -z "${OUTPUT_FILE}" ]; then
+    BASE_NAME="${INPUT_FILE%.*}"
+    if [ "${EMIT_FORMAT}" == "-S" ]; then
+        OUTPUT_FILE="${BASE_NAME}.s"
+    elif [ "${EMIT_FORMAT}" == "-b" ]; then
+        OUTPUT_FILE="${BASE_NAME}.bin"
+    else
+        OUTPUT_FILE="${BASE_NAME}.hex"
+    fi
+fi
+
+TMP_LL=$(mktemp /tmp/fpgagpu_XXXXXX.ll)
+trap 'rm -f "${TMP_LL}"' EXIT
+
+# Step 1: Compile C/C++ to LLVM IR using Clang
+"${CLANG_BIN}" \
+    -target riscv32-unknown-elf \
+    -march=rv32i \
+    -nostdlib \
+    -ffreestanding \
+    -fno-builtin \
+    "${OPT_LEVEL}" \
+    -S -emit-llvm \
+    -I"${RUNTIME_DIR}" \
+    "${EXTRA_ARGS[@]}" \
+    "${INPUT_FILE}" \
+    -o "${TMP_LL}"
+
+# Step 2: Run fpgagpu-llc backend to emit machine code
+"${LLC_BIN}" "${EMIT_FORMAT}" "${OPT_LEVEL}" -o "${OUTPUT_FILE}" "${TMP_LL}"

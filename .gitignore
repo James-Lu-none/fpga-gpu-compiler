@@ -1,0 +1,16 @@
+# Build directories
+build/
+bin/
+*.o
+*.a
+*.so
+
+# Generated test artifacts
+examples/*/*.hex
+examples/*/*.s
+examples/*/*.bin
+
+# Temporary and editor files
+*.swp
+*~
+.DS_Store
