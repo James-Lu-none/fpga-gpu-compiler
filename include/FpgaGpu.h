@@ -26,6 +26,7 @@ enum class Opcode : uint8_t {
     S2R  = 0xB0, // I-Type: VRF[rd] = SysReg[imm]
     BR   = 0xC0, // J-Type: if (NZP & cond) PC += imm19
     SYNC = 0xE0, // J-Type: Pop SIMT Stack (Reconvergence)
+    SSY  = 0xE1, // J-Type: Push Reconvergence PC to SIMT Stack
     EXIT = 0xFF  // J-Type: Terminate Warp
 };
 
@@ -118,6 +119,10 @@ struct MachineInstruction {
             case Opcode::BR:
                 return (opcodeVal << 24) |
                        ((static_cast<uint32_t>(cond) & 0x7) << 19) |
+                       (static_cast<uint32_t>(imm) & 0x7FFFF);
+
+            case Opcode::SSY:
+                return (opcodeVal << 24) |
                        (static_cast<uint32_t>(imm) & 0x7FFFF);
 
             case Opcode::SYNC:

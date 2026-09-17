@@ -25,7 +25,7 @@ std::vector<MachineInstruction> CodeEmitter::resolveBranchOffsets() {
     size_t currentPC = 0;
     for (const auto &bb : basicBlocks) {
         for (auto mi : bb.instructions) {
-            if (mi.op == Opcode::BR && !mi.labelTarget.empty()) {
+            if ((mi.op == Opcode::BR || mi.op == Opcode::SSY) && !mi.labelTarget.empty()) {
                 if (auto it = blockToPC.find(mi.labelTarget); it != blockToPC.end()) {
                     int32_t offset = static_cast<int32_t>(it->second) - static_cast<int32_t>(currentPC);
                     mi.imm = offset;
@@ -98,6 +98,9 @@ void CodeEmitter::emitAssembly(std::ostream &os) {
                     break;
                 case Opcode::SYNC:
                     os << "SYNC";
+                    break;
+                case Opcode::SSY:
+                    os << "SSY " << (mi.labelTarget.empty() ? std::to_string(mi.imm) : mi.labelTarget);
                     break;
                 case Opcode::EXIT:
                     os << "EXIT";

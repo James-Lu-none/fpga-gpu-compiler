@@ -174,6 +174,9 @@ bool Assembler::parseLine(const std::string &rawLine, size_t lineNum,
             }
         } else if (mnemonic == "SYNC") {
             mi.op = Opcode::SYNC;
+        } else if (mnemonic == "SSY") {
+            mi.op = Opcode::SSY;
+            if (tokens.size() > 1) mi.labelTarget = tokens[1];
         } else if (mnemonic == "EXIT") {
             mi.op = Opcode::EXIT;
         } else {
@@ -231,6 +234,7 @@ std::string Assembler::disassemble(uint32_t word) {
             break;
         }
         case Opcode::SYNC: oss << "SYNC"; break;
+        case Opcode::SSY:  oss << "SSY " << imm19; break;
         case Opcode::EXIT: oss << "EXIT"; break;
         default: oss << ".word 0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << word; break;
     }

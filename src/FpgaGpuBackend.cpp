@@ -14,8 +14,81 @@
 
 #include <fstream>
 #include <iostream>
+#include <set>
+
+#include <llvm/Analysis/PostDominators.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/InlineAsm.h>
 
 namespace fpgagpu {
+
+static void runDivergencePass(llvm::Function &F) {
+    if (F.isDeclaration()) return;
+
+    // 1. Name all blocks
+    uint32_t bbIdx = 0;
+    for (auto &BB : F) {
+        if (!BB.hasName()) {
+            BB.setName("bb." + std::to_string(bbIdx));
+        }
+        bbIdx++;
+    }
+
+    llvm::PostDominatorTree PDT(F);
+    llvm::DominatorTree DT(F);
+
+    std::vector<llvm::BranchInst*> condBranches;
+    for (auto &BB : F) {
+        if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(BB.getTerminator())) {
+            if (BI->isConditional()) {
+                condBranches.push_back(BI);
+            }
+        }
+    }
+
+    llvm::LLVMContext &ctx = F.getContext();
+    llvm::FunctionType *fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), false);
+
+    for (auto *BI : condBranches) {
+        llvm::BasicBlock *BB = BI->getParent();
+        llvm::BasicBlock *IPD = nullptr;
+        if (auto *node = PDT.getNode(BB)) {
+            if (auto *idom = node->getIDom()) {
+                IPD = idom->getBlock();
+            }
+        }
+
+        if (!IPD) continue; // No reconvergence point
+
+        // Insert SSY IPD before branch
+        std::string ssyAsm = "ssy " + IPD->getName().str();
+        auto *ssyInlineAsm = llvm::InlineAsm::get(fty, ssyAsm, "", true);
+        llvm::CallInst::Create(fty, ssyInlineAsm, "", BI);
+
+        // Find predecessors of IPD dominated by BB
+        std::vector<llvm::BasicBlock*> preds;
+        for (auto *pred : llvm::predecessors(IPD)) {
+            if (DT.dominates(BB, pred)) {
+                preds.push_back(pred);
+            }
+        }
+
+        for (auto *pred : preds) {
+            llvm::BasicBlock *SyncBB = llvm::BasicBlock::Create(ctx, pred->getName() + ".sync", &F);
+            llvm::BranchInst::Create(IPD, SyncBB);
+            auto *syncInlineAsm = llvm::InlineAsm::get(fty, "sync", "", true);
+            llvm::CallInst::Create(fty, syncInlineAsm, "", SyncBB->getTerminator());
+
+            llvm::Instruction *term = pred->getTerminator();
+            for (unsigned i = 0; i < term->getNumSuccessors(); i++) {
+                if (term->getSuccessor(i) == IPD) {
+                    term->setSuccessor(i, SyncBB);
+                }
+            }
+        }
+    }
+}
 
 CompilerBackend::CompilerBackend() : context(std::make_unique<llvm::LLVMContext>()) {}
 CompilerBackend::~CompilerBackend() = default;
@@ -65,6 +138,11 @@ bool CompilerBackend::compileModule(llvm::Module &M,
                 FPM.run(F, FAM);
             }
         }
+    }
+
+    // Run our custom Divergence Pass to insert SSY and SYNC
+    for (llvm::Function &F : M) {
+        runDivergencePass(F);
     }
 
     // Collect all basic blocks across non-declaration functions

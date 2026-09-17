@@ -267,6 +267,16 @@ void InstructionSelector::selectCall(llvm::CallInst &CI, BasicBlockCode &bbCode)
             mi.comment = "sync inline asm";
             bbCode.instructions.push_back(mi);
             return;
+        } else if (asmStr.find("ssy") != std::string::npos) {
+            MachineInstruction mi;
+            mi.op = Opcode::SSY;
+            size_t spacePos = asmStr.find(' ');
+            if (spacePos != std::string::npos) {
+                mi.labelTarget = asmStr.substr(spacePos + 1);
+            }
+            mi.comment = "ssy inline asm";
+            bbCode.instructions.push_back(mi);
+            return;
         } else if (asmStr.find("exit") != std::string::npos) {
             MachineInstruction mi;
             mi.op = Opcode::EXIT;
