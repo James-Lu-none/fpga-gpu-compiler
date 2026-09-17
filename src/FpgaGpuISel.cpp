@@ -242,6 +242,49 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
             mi.comment = "mul";
             break;
         }
+        case llvm::Instruction::Shl: {
+            if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(op1)) {
+                uint64_t shift = CI->getZExtValue();
+                if (shift == 0) {
+                    mi.op = Opcode::ADDI;
+                    mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+                    mi.imm = 0;
+                    mi.comment = "shl 0 (mov)";
+                    bbCode.instructions.push_back(mi);
+                    return;
+                } else if (shift == 1) {
+                    VReg src = getOrMaterializeVReg(op0, bbCode);
+                    mi.op = Opcode::ADD;
+                    mi.rs1 = src;
+                    mi.rs2 = src;
+                    mi.comment = "shl 1 (add x, x)";
+                    bbCode.instructions.push_back(mi);
+                    return;
+                } else {
+                    int32_t scale = 1 << shift;
+                    VReg scaleReg = allocateVReg();
+                    MachineInstruction miImm;
+                    miImm.op = Opcode::ADDI;
+                    miImm.rd = scaleReg;
+                    miImm.rs1 = VREG_ZERO;
+                    miImm.imm = scale;
+                    miImm.comment = "shl constant factor";
+                    bbCode.instructions.push_back(miImm);
+
+                    mi.op = Opcode::MUL;
+                    mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+                    mi.rs2 = scaleReg;
+                    mi.comment = "shl via mul";
+                    bbCode.instructions.push_back(mi);
+                    return;
+                }
+            }
+            mi.op = Opcode::MUL;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "shl fallback mul";
+            break;
+        }
         default:
             // Fallback to ADD
             mi.op = Opcode::ADD;
