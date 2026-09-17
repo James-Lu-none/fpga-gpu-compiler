@@ -65,7 +65,35 @@ std::vector<BasicBlockCode> InstructionSelector::selectInstructions() {
         BasicBlockCode bbCode;
         bbCode.name = blockNames[&BB];
         
+        if (isEntryBlock) {
+            isEntryBlock = false;
+            // Generate prologue to load kernel arguments from Kernarg memory at 0x00000000
+            uint32_t argIdx = 0;
+            for (const llvm::Argument &arg : func.args()) {
+                VReg argReg = getOrCreateVReg(&arg);
+                VReg addrReg = allocateVReg();
+
+                // ADDI addrReg, R0, (argIdx * 8) - SIMD 2-lane 64-bit alignment
+                MachineInstruction miAddr;
+                miAddr.op = Opcode::ADDI;
+                miAddr.rd = addrReg;
+                miAddr.rs1 = VREG_ZERO;
+                miAddr.imm = static_cast<int32_t>(argIdx * 8);
+                miAddr.comment = "kernarg offset for arg " + std::to_string(argIdx);
+                bbCode.instructions.push_back(miAddr);
+
+                // LDR argReg, [addrReg]
+                MachineInstruction miLoad;
+                miLoad.op = Opcode::LDR;
+                miLoad.rd = argReg;
+                miLoad.rs1 = addrReg;
+                miLoad.comment = "load kernarg " + std::string(arg.getName());
+                bbCode.instructions.push_back(miLoad);
+
+                argIdx++;
+            }
         }
+
         selectBasicBlock(BB, bbCode);
         code.push_back(std::move(bbCode));
     }
