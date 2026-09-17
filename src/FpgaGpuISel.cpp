@@ -10,7 +10,7 @@ namespace fpgagpu {
 InstructionSelector::InstructionSelector(llvm::Function &F) : func(F) {}
 
 VReg InstructionSelector::getOrCreateVReg(const llvm::Value *val) {
-if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+    if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(val)) {
         if (CI->isZero()) return VREG_ZERO;
     }
     if (auto it = valueToVReg.find(val); it != valueToVReg.end()) {
@@ -64,7 +64,7 @@ std::vector<BasicBlockCode> InstructionSelector::selectInstructions() {
     for (llvm::BasicBlock &BB : func) {
         BasicBlockCode bbCode;
         bbCode.name = blockNames[&BB];
-        
+
         if (isEntryBlock) {
             isEntryBlock = false;
             // Generate prologue to load kernel arguments from Kernarg memory at 0x00000000
@@ -475,6 +475,91 @@ void InstructionSelector::selectCall(llvm::CallInst &CI, BasicBlockCode &bbCode)
             MachineInstruction mi;
             mi.op = Opcode::EXIT;
             mi.comment = "exit";
+            bbCode.instructions.push_back(mi);
+        } else if (name == "get_global_id" || name.contains("global_id")) {
+            uint32_t dim = 0;
+            if (CI.arg_size() > 0) {
+                if (auto *C = llvm::dyn_cast<llvm::ConstantInt>(CI.getArgOperand(0))) {
+                    dim = static_cast<uint32_t>(C->getZExtValue());
+                }
+            }
+            VReg vTid = allocateVReg();
+            VReg vBid = allocateVReg();
+            VReg vBid2 = allocateVReg();
+            VReg vDst = getOrCreateVReg(&CI);
+
+            MachineInstruction miTid;
+            miTid.op = Opcode::S2R;
+            miTid.rd = vTid;
+            miTid.imm = (dim == 0) ? static_cast<int32_t>(SysReg::TID_X) : static_cast<int32_t>(SysReg::TID_Y);
+            miTid.comment = (dim == 0) ? "s2r TID.X" : "s2r TID.Y";
+            bbCode.instructions.push_back(miTid);
+
+            MachineInstruction miBid;
+            miBid.op = Opcode::S2R;
+            miBid.rd = vBid;
+            miBid.imm = (dim == 0) ? static_cast<int32_t>(SysReg::BID_X) : static_cast<int32_t>(SysReg::BID_Y);
+            miBid.comment = (dim == 0) ? "s2r BID.X" : "s2r BID.Y";
+            bbCode.instructions.push_back(miBid);
+
+            if (dim == 0) {
+                // bid * 2 (2 SIMD lanes per block along X dimension)
+                MachineInstruction miShift;
+                miShift.op = Opcode::ADD;
+                miShift.rd = vBid2;
+                miShift.rs1 = vBid;
+                miShift.rs2 = vBid;
+                miShift.comment = "bid * 2";
+                bbCode.instructions.push_back(miShift);
+
+                // global_id = bid*2 + tid
+                MachineInstruction miAdd;
+                miAdd.op = Opcode::ADD;
+                miAdd.rd = vDst;
+                miAdd.rs1 = vBid2;
+                miAdd.rs2 = vTid;
+                miAdd.comment = "global_id = bid*2 + tid";
+                bbCode.instructions.push_back(miAdd);
+            } else {
+                // Y/Z dimension: 1 lane per block along Y
+                MachineInstruction miAdd;
+                miAdd.op = Opcode::ADD;
+                miAdd.rd = vDst;
+                miAdd.rs1 = vBid;
+                miAdd.rs2 = vTid;
+                miAdd.comment = "global_id = bid + tid";
+                bbCode.instructions.push_back(miAdd);
+            }
+        } else if (name == "get_local_id" || name.contains("local_id")) {
+            uint32_t dim = 0;
+            if (CI.arg_size() > 0) {
+                if (auto *C = llvm::dyn_cast<llvm::ConstantInt>(CI.getArgOperand(0))) {
+                    dim = static_cast<uint32_t>(C->getZExtValue());
+                }
+            }
+            MachineInstruction mi;
+            mi.op = Opcode::S2R;
+            mi.rd = getOrCreateVReg(&CI);
+            mi.imm = (dim == 0) ? static_cast<int32_t>(SysReg::TID_X) : static_cast<int32_t>(SysReg::TID_Y);
+            mi.comment = (dim == 0) ? "s2r TID.X" : "s2r TID.Y";
+            bbCode.instructions.push_back(mi);
+        } else if (name == "get_group_id" || name.contains("group_id")) {
+            uint32_t dim = 0;
+            if (CI.arg_size() > 0) {
+                if (auto *C = llvm::dyn_cast<llvm::ConstantInt>(CI.getArgOperand(0))) {
+                    dim = static_cast<uint32_t>(C->getZExtValue());
+                }
+            }
+            MachineInstruction mi;
+            mi.op = Opcode::S2R;
+            mi.rd = getOrCreateVReg(&CI);
+            mi.imm = (dim == 0) ? static_cast<int32_t>(SysReg::BID_X) : static_cast<int32_t>(SysReg::BID_Y);
+            mi.comment = (dim == 0) ? "s2r BID.X" : "s2r BID.Y";
+            bbCode.instructions.push_back(mi);
+        } else if (name == "barrier" || name.contains("barrier")) {
+            MachineInstruction mi;
+            mi.op = Opcode::SYNC;
+            mi.comment = "sync barrier";
             bbCode.instructions.push_back(mi);
         }
     }
