@@ -3,11 +3,13 @@
 
 #include <stdint.h>
 
-#define __kernel
-#define __global
-#define __constant
-#define __local
-#define __private
+#define __kernel // like __global__, for kernel entry point
+#define __global // like __device__, for read-write data in global memory (gpc L2 cache)
+#define __constant // like __constant__, for read-only data in global memory
+#define __local // like __shared__, for read-write data in local memory (SM wise L1 cache)
+#define __private // like __private__, for read-write data in private memory (per-thread registers)
+
+// above qualifiers are removed to avoid compilation errors in host code
 
 #ifdef __cplusplus
 extern "C" {
