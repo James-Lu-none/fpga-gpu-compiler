@@ -159,13 +159,37 @@ void InstructionSelector::selectInstruction(llvm::Instruction &I, BasicBlockCode
             }
         }
         
-        // For non-constant indices, add the index operand directly
-        VReg idxReg = getOrCreateVReg(GEP->getOperand(GEP->getNumOperands() - 1));
+        // For non-constant indices, scale the index by element size
+        const auto &DL = func.getParent()->getDataLayout();
+        uint64_t elemSize = DL.getTypeAllocSize(GEP->getSourceElementType());
+        VReg idxReg = getOrMaterializeVReg(GEP->getOperand(GEP->getNumOperands() - 1), bbCode);
+        VReg byteOffsetReg = idxReg;
+
+        if (elemSize > 1) {
+            byteOffsetReg = allocateVReg();
+            VReg elemSizeReg = allocateVReg();
+            MachineInstruction miImm;
+            miImm.op = Opcode::ADDI;
+            miImm.rd = elemSizeReg;
+            miImm.rs1 = VREG_ZERO;
+            miImm.imm = static_cast<int32_t>(elemSize);
+            miImm.comment = "elem size";
+            bbCode.instructions.push_back(miImm);
+
+            MachineInstruction miMul;
+            miMul.op = Opcode::MUL;
+            miMul.rd = byteOffsetReg;
+            miMul.rs1 = idxReg;
+            miMul.rs2 = elemSizeReg;
+            miMul.comment = "scale index by elem size";
+            bbCode.instructions.push_back(miMul);
+        }
+
         MachineInstruction mi;
         mi.op = Opcode::ADD;
         mi.rd = dstReg;
         mi.rs1 = baseReg;
-        mi.rs2 = idxReg;
+        mi.rs2 = byteOffsetReg;
         mi.comment = "gep dynamic offset";
         bbCode.instructions.push_back(mi);
     }
@@ -183,15 +207,21 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
         case llvm::Instruction::Add: {
             if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(op1)) {
                 int64_t val = CI->getSExtValue();
-                if (val >= -8192 && val <= 8191) {
+                // ADDI is the only direct immediate form supported by the
+                // hardware. Its signed 12-bit immediate range is -2048..2047.
+                // Keep the non-constant operand as a register; materializing
+                // it here would emit an unnecessary instruction.
+                if (val >= -2048 && val <= 2047) {
                     mi.op = Opcode::ADDI;
-                    mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+                    mi.rs1 = getOrCreateVReg(op0);
                     mi.imm = static_cast<int32_t>(val);
-                    mi.comment = "addi";
+                    mi.comment = "add immediate";
                     bbCode.instructions.push_back(mi);
                     return;
                 }
             }
+            // Non-constant or out-of-range constants must be materialized in
+            // registers before using the register-register ADD instruction.
             mi.op = Opcode::ADD;
             mi.rs1 = getOrMaterializeVReg(op0, bbCode);
             mi.rs2 = getOrMaterializeVReg(op1, bbCode);
