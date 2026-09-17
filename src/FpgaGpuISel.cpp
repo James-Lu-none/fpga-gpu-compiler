@@ -10,12 +10,36 @@ namespace fpgagpu {
 InstructionSelector::InstructionSelector(llvm::Function &F) : func(F) {}
 
 VReg InstructionSelector::getOrCreateVReg(const llvm::Value *val) {
+if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+        if (CI->isZero()) return VREG_ZERO;
+    }
     if (auto it = valueToVReg.find(val); it != valueToVReg.end()) {
         return it->second;
     }
     VReg reg = allocateVReg();
     valueToVReg[val] = reg;
     return reg;
+}
+
+VReg InstructionSelector::getOrMaterializeVReg(const llvm::Value *val, BasicBlockCode &bbCode) {
+    if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+        if (CI->isZero()) return VREG_ZERO;
+        if (auto it = valueToVReg.find(val); it != valueToVReg.end()) {
+            return it->second;
+        }
+        VReg reg = allocateVReg();
+        valueToVReg[val] = reg;
+
+        MachineInstruction mi;
+        mi.op = Opcode::ADDI;
+        mi.rd = reg;
+        mi.rs1 = VREG_ZERO;
+        mi.imm = static_cast<int32_t>(CI->getSExtValue());
+        mi.comment = "const " + std::to_string(CI->getSExtValue());
+        bbCode.instructions.push_back(mi);
+        return reg;
+    }
+    return getOrCreateVReg(val);
 }
 
 VReg InstructionSelector::allocateVReg() {
@@ -133,7 +157,7 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
                 int64_t val = CI->getSExtValue();
                 if (val >= -8192 && val <= 8191) {
                     mi.op = Opcode::ADDI;
-                    mi.rs1 = getOrCreateVReg(op0);
+                    mi.rs1 = getOrMaterializeVReg(op0, bbCode);
                     mi.imm = static_cast<int32_t>(val);
                     mi.comment = "addi";
                     bbCode.instructions.push_back(mi);
@@ -141,30 +165,30 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
                 }
             }
             mi.op = Opcode::ADD;
-            mi.rs1 = getOrCreateVReg(op0);
-            mi.rs2 = getOrCreateVReg(op1);
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
             mi.comment = "add";
             break;
         }
         case llvm::Instruction::Sub: {
             mi.op = Opcode::SUB;
-            mi.rs1 = getOrCreateVReg(op0);
-            mi.rs2 = getOrCreateVReg(op1);
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
             mi.comment = "sub";
             break;
         }
         case llvm::Instruction::Mul: {
             mi.op = Opcode::MUL;
-            mi.rs1 = getOrCreateVReg(op0);
-            mi.rs2 = getOrCreateVReg(op1);
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
             mi.comment = "mul";
             break;
         }
         default:
             // Fallback to ADD
             mi.op = Opcode::ADD;
-            mi.rs1 = getOrCreateVReg(op0);
-            mi.rs2 = getOrCreateVReg(op1);
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
             break;
     }
 
@@ -175,8 +199,8 @@ void InstructionSelector::selectCmp(llvm::ICmpInst &CI, BasicBlockCode &bbCode) 
     // CMP rs1, rs2 (updates NZP condition codes in ALU)
     MachineInstruction mi;
     mi.op = Opcode::CMP;
-    mi.rs1 = getOrCreateVReg(CI.getOperand(0));
-    mi.rs2 = getOrCreateVReg(CI.getOperand(1));
+    mi.rs1 = getOrMaterializeVReg(CI.getOperand(0), bbCode);
+    mi.rs2 = getOrMaterializeVReg(CI.getOperand(1), bbCode);
     mi.comment = "cmp";
     bbCode.instructions.push_back(mi);
 }

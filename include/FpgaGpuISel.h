@@ -36,6 +36,7 @@ private:
     std::unordered_map<const llvm::BasicBlock*, std::string> blockNames;
 
     VReg getOrCreateVReg(const llvm::Value *val);
+    VReg getOrMaterializeVReg(const llvm::Value *val, BasicBlockCode &bbCode);
     VReg allocateVReg();
 
     void selectBasicBlock(llvm::BasicBlock &BB, BasicBlockCode &bbCode);
