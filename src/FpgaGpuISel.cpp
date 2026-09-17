@@ -24,12 +24,23 @@ VReg InstructionSelector::allocateVReg() {
 
 std::vector<BasicBlockCode> InstructionSelector::selectInstructions() {
     std::vector<BasicBlockCode> code;
+    bool isEntryBlock = true;
+
+    blockNames.clear();
+    uint32_t bbIdx = 0;
+    for (llvm::BasicBlock &BB : func) {
+        std::string name = BB.getName().str();
+        if (name.empty()) {
+            name = "bb." + std::to_string(bbIdx);
+        }
+        blockNames[&BB] = name;
+        bbIdx++;
+    }
 
     for (llvm::BasicBlock &BB : func) {
         BasicBlockCode bbCode;
-        bbCode.name = BB.getName().str();
-        if (bbCode.name.empty()) {
-            bbCode.name = "bb." + std::to_string(code.size());
+        bbCode.name = blockNames[&BB];
+        
         }
         selectBasicBlock(BB, bbCode);
         code.push_back(std::move(bbCode));
@@ -175,8 +186,7 @@ void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbC
         MachineInstruction mi;
         mi.op = Opcode::BR;
         mi.cond = BranchCond::ALWAYS;
-        mi.labelTarget = BI.getSuccessor(0)->getName().str();
-        if (mi.labelTarget.empty()) mi.labelTarget = "bb." + std::to_string(reinterpret_cast<uintptr_t>(BI.getSuccessor(0)));
+        mi.labelTarget = blockNames[BI.getSuccessor(0)];
         mi.comment = "unconditional branch";
         bbCode.instructions.push_back(mi);
     } else {
@@ -204,8 +214,7 @@ void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbC
         MachineInstruction miTrue;
         miTrue.op = Opcode::BR;
         miTrue.cond = branchCond;
-        miTrue.labelTarget = BI.getSuccessor(0)->getName().str();
-        if (miTrue.labelTarget.empty()) miTrue.labelTarget = "bb." + std::to_string(reinterpret_cast<uintptr_t>(BI.getSuccessor(0)));
+        miTrue.labelTarget = blockNames[BI.getSuccessor(0)];
         miTrue.comment = "branch taken";
         bbCode.instructions.push_back(miTrue);
 
@@ -213,8 +222,7 @@ void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbC
         MachineInstruction miFalse;
         miFalse.op = Opcode::BR;
         miFalse.cond = BranchCond::ALWAYS;
-        miFalse.labelTarget = BI.getSuccessor(1)->getName().str();
-        if (miFalse.labelTarget.empty()) miFalse.labelTarget = "bb." + std::to_string(reinterpret_cast<uintptr_t>(BI.getSuccessor(1)));
+        miFalse.labelTarget = blockNames[BI.getSuccessor(1)];
         miFalse.comment = "branch fallthrough/else";
         bbCode.instructions.push_back(miFalse);
     }

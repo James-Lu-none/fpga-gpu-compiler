@@ -33,6 +33,7 @@ private:
     llvm::Function &func;
     VReg nextVReg{1};
     std::unordered_map<const llvm::Value*, VReg> valueToVReg;
+    std::unordered_map<const llvm::BasicBlock*, std::string> blockNames;
 
     VReg getOrCreateVReg(const llvm::Value *val);
     VReg allocateVReg();
