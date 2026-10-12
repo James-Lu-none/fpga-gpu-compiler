@@ -42,3 +42,12 @@ target_link_libraries(fpgagpu-llc PRIVATE ${LLVM_LIBS})
 
 # Install target to bin/
 install(TARGETS fpgagpu-llc DESTINATION bin)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(assembler-ssy-test
+        tests/assembler_ssy_test.cpp
+        src/FpgaGpuAssembler.cpp
+    )
+    add_test(NAME assembler-ssy COMMAND assembler-ssy-test)
+endif()
