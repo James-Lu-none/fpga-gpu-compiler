@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <stdexcept>
 
 namespace fpgagpu {
 
@@ -69,10 +70,13 @@ bool Assembler::assemble(std::istream &is, std::vector<uint32_t> &machineCode) {
         }
     }
 
-    // Pass 2: Resolve branch target labels to relative offsets
+    // Pass 2: Resolve branch and reconvergence labels relative to this instruction.
     for (size_t pc = 0; pc < instructions.size(); pc++) {
         auto &mi = instructions[pc];
-        if (mi.op == Opcode::BR && !mi.labelTarget.empty()) {
+        // Resolve BR and SSY label targets into PC-relative offsets:
+        // mi.imm = target_pc - current_pc.
+        // so program can jump: target_pc = current_pc + immediate
+        if ((mi.op == Opcode::BR || mi.op == Opcode::SSY) && !mi.labelTarget.empty()) {
             if (auto it = labels.find(mi.labelTarget); it != labels.end()) {
                 mi.imm = static_cast<int32_t>(it->second) - static_cast<int32_t>(pc);
             } else {
@@ -176,7 +180,19 @@ bool Assembler::parseLine(const std::string &rawLine, size_t lineNum,
             mi.op = Opcode::SYNC;
         } else if (mnemonic == "SSY") {
             mi.op = Opcode::SSY;
-            if (tokens.size() > 1) mi.labelTarget = tokens[1];
+            if (tokens.size() != 2) {
+                throw std::runtime_error("SSY requires one offset or label target");
+            }
+            // Match BR's PC-relative semantics, including signed/hex offsets.
+            size_t consumed = 0;
+            try {
+                mi.imm = std::stoi(tokens[1], &consumed, 0);
+            } catch (const std::invalid_argument &) {
+                mi.labelTarget = tokens[1];
+            }
+            if (mi.labelTarget.empty() && consumed != tokens[1].size()) {
+                throw std::runtime_error("Invalid SSY offset: " + tokens[1]);
+            }
         } else if (mnemonic == "EXIT") {
             mi.op = Opcode::EXIT;
         } else {
