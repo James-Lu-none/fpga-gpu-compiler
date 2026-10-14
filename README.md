@@ -156,3 +156,7 @@ void vector_add(const uint32_t *A, const uint32_t *B, uint32_t *C, uint32_t n) {
 1. The compiled `kernel.hex` or `kernel.bin` is transferred by the host application through PCIe XDMA into the GPC I-RAM Broadcast Window at `0x1000_1000 ~ 0x1000_1FFF`.
 2. The FPGA hardware broadcasts the instruction words to all on-chip Streaming Multiprocessors.
 3. The on-chip PicoRV32 Command Processor launches the hardware thread block scheduler via `REG_DOORBELL = 1`.
+
+Use `scripts/fpgagpu-clang --save-temps -x kernel.c -o kernel.hex` to also
+write `kernel.ll`: the Clang-generated LLVM IR passed into the GPU backend,
+before backend optimization and SIMT reconvergence insertion.
