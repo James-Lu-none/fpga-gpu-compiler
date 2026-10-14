@@ -111,7 +111,14 @@ void InstructionSelector::selectInstruction(llvm::Instruction &I, BasicBlockCode
     if (auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(&I)) {
         selectBinaryOp(*BO, bbCode);
     } else if (auto *CI = llvm::dyn_cast<llvm::ICmpInst>(&I)) {
-        selectCmp(*CI, bbCode);
+        // Branch-only predicates are emitted at each branch use, keeping CMP
+        // adjacent to BR and avoiding an unused earlier NZP update.
+        const bool branchOnly = std::all_of(CI->user_begin(), CI->user_end(),
+            [](llvm::User *user) {
+                auto *branch = llvm::dyn_cast<llvm::BranchInst>(user);
+                return branch && branch->isConditional();
+            });
+        if (!branchOnly) selectCmp(*CI, bbCode);
     } else if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(&I)) {
         selectBranch(*BI, bbCode);
     } else if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&I)) {
@@ -320,6 +327,9 @@ void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbC
         uint8_t branchCond = BranchCond::NE; // default != 0
 
         if (auto *CI = llvm::dyn_cast<llvm::ICmpInst>(condVal)) {
+            // ADD/SUB/address arithmetic also updates NZP. Emit the predicate
+            // at its branch use so intervening instructions cannot clobber it.
+            selectCmp(*CI, bbCode);
             switch (CI->getPredicate()) {
                 case llvm::CmpInst::ICMP_EQ:  branchCond = BranchCond::EQ; break;
                 case llvm::CmpInst::ICMP_NE:  branchCond = BranchCond::NE; break;
