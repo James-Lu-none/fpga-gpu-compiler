@@ -376,7 +376,7 @@ void InstructionSelector::selectLoad(llvm::LoadInst &LI, BasicBlockCode &bbCode)
 }
 
 void InstructionSelector::selectStore(llvm::StoreInst &SI, BasicBlockCode &bbCode) {
-    VReg val = getOrCreateVReg(SI.getValueOperand());
+    VReg val = getOrMaterializeVReg(SI.getValueOperand(), bbCode);
     VReg ptr = getOrCreateVReg(SI.getPointerOperand());
 
     MachineInstruction mi;
@@ -437,7 +437,7 @@ void InstructionSelector::selectCall(llvm::CallInst &CI, BasicBlockCode &bbCode)
         } else if (asmStr.find("str") != std::string::npos) {
             MachineInstruction mi;
             mi.op = Opcode::STR;
-            mi.rs2 = getOrCreateVReg(CI.getArgOperand(0)); // data
+            mi.rs2 = getOrMaterializeVReg(CI.getArgOperand(0), bbCode); // data
             mi.rs1 = getOrCreateVReg(CI.getArgOperand(1)); // addr
             mi.comment = "str inline asm";
             bbCode.instructions.push_back(mi);
