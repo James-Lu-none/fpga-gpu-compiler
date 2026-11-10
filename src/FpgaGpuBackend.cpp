@@ -169,6 +169,13 @@ bool CompilerBackend::compileModule(llvm::Module &M,
         std::cerr << "Error: Register allocation failed\n";
         return false;
     }
+    size_t instructionCount = 0;
+    for (const auto &bb : allBlocks) instructionCount += bb.instructions.size();
+    if (instructionCount > IRAM_DEPTH) {
+        std::cerr << "Error: program exceeds " << IRAM_DEPTH
+                  << " IRAM words after register bank repair\n";
+        return false;
+    }
 
     // Emit output file
     std::ofstream outFile;

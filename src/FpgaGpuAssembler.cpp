@@ -70,9 +70,18 @@ bool Assembler::assemble(std::istream &is, std::vector<uint32_t> &machineCode) {
         }
     }
 
+    if (instructions.size() > IRAM_DEPTH) {
+        std::cerr << "Error: program exceeds " << IRAM_DEPTH << " IRAM words\n";
+        return false;
+    }
     // Pass 2: Resolve branch and reconvergence labels relative to this instruction.
     for (size_t pc = 0; pc < instructions.size(); pc++) {
         auto &mi = instructions[pc];
+        if (mi.hasRegisterBankConflict()) {
+            std::cerr << "Error: odd/even register bank conflict at instruction " << pc
+                      << ": R" << unsigned(mi.rs1) << " and R" << unsigned(mi.rs2) << '\n';
+            return false;
+        }
         // Resolve BR and SSY label targets into PC-relative offsets:
         // mi.imm = target_pc - current_pc.
         // so program can jump: target_pc = current_pc + immediate
