@@ -12,9 +12,10 @@ class RegisterAllocator {
 public:
     RegisterAllocator() = default;
 
-    // Allocates physical registers R1..R31 for all virtual registers
-    // across the list of basic blocks. R0 is reserved as the zero register.
+    // R0 is zero; R30/R31 are reserved for even/odd bank repair copies.
+    // Allocate R1..R29, then repair all real two-source bank conflicts.
     bool allocate(std::vector<BasicBlockCode> &blocks);
+    static bool verifyBanks(const std::vector<BasicBlockCode> &blocks);
 
 private:
     std::unordered_map<VReg, uint8_t> vregToPhys;

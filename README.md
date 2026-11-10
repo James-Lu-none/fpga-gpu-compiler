@@ -14,7 +14,7 @@ fpga-gpu-compiler/
 │   ├── FpgaGpu.h               # Hardware ISA opcodes, registers, and 32-bit binary formats
 │   ├── FpgaGpuBackend.h        # Module-level compilation coordinator
 │   ├── FpgaGpuISel.h           # Instruction Selection (LLVM IR -> FpgaGpu IR)
-│   ├── FpgaGpuRegAlloc.h       # Register Allocator (R1..R31 physical mapping)
+│   ├── FpgaGpuRegAlloc.h       # Bank-aware allocator (R1..R29, R30/R31 repair)
 │   ├── FpgaGpuEmitter.h        # Assembly (.s), Hex (.hex), and Binary (.bin) code emitter
 │   └── FpgaGpuAssembler.h      # Standalone Assembler and Disassembler
 ├── src/                        # C++ Implementation
@@ -66,6 +66,23 @@ The compiler targets the custom 32-bit RISC ISA implemented in `rtl/sm/fetch_dec
 ---
 
 ## Building the Compiler
+
+The odd/even VRF requires distinct nonzero register sources to be in opposite
+banks for ADD/SUB/MUL/CMP/AND/OR/XOR/SETCC and STR. Equal sources broadcast;
+R0 and single-source instructions do not impose a bank constraint. BR reads
+its predicate from rd, while immediate bits are not a second register source.
+
+The custom allocator in `src/FpgaGpuRegAlloc.cpp` prefers opposite banks and
+inserts `ADDI scratch, source, 0` for remaining conflicts before branch/SSY
+offset resolution. R30 (even) and R31 (odd) are reserved for these copies;
+R1..R29 remain allocatable. Spilling is not supported, and excessive pressure
+is reported explicitly. Final instructions are verified and programs exceeding
+1,024 IRAM words are rejected. The assembler rejects conflicting hand-written
+source pairs rather than silently modifying explicit physical registers.
+
+Rebuild the compiler and recompile kernels for banked hardware. Old machine
+code can contain unsupported bank conflicts; the RTL simulation detects these
+and the hardware has no conflict replay path.
 
 ### Prerequisites
 - Ubuntu 22.04 / 24.04 or compatible Linux

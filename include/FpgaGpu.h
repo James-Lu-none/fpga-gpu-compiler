@@ -80,6 +80,24 @@ struct MachineInstruction {
     std::string labelTarget; // Label for branch targets before resolution
     std::string comment;
 
+    // Only these opcodes consume both register-source fields. In particular,
+    // immediate bits and BR's predicate in rd are not a second RF source.
+    bool readsBothSources() const {
+        switch (op) {
+            case Opcode::ADD: case Opcode::SUB: case Opcode::MUL:
+            case Opcode::CMP: case Opcode::AND: case Opcode::OR:
+            case Opcode::XOR: case Opcode::SETCC: case Opcode::STR:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    bool hasRegisterBankConflict() const {
+        return readsBothSources() && rs1 != 0 && rs2 != 0 && rs1 != rs2 &&
+               ((rs1 ^ rs2) & 1) == 0;
+    }
+
     // Encodes instruction into 32-bit hardware machine word
     uint32_t encode() const {
         uint32_t opcodeVal = static_cast<uint32_t>(op);

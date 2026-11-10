@@ -4,6 +4,7 @@
 #include <set>
 #include <unordered_map>
 #include <vector>
+#include <limits>
 
 namespace fpgagpu {
 
@@ -16,6 +17,7 @@ bool RegisterAllocator::allocate(std::vector<BasicBlockCode> &blocks) {
     };
 
     std::unordered_map<VReg, LiveRange> intervals;
+    std::unordered_map<VReg, std::unordered_map<VReg, unsigned>> partners;
 
     // Step 1: Assign global instruction index and compute live ranges (birth & death)
     uint32_t globalIdx = 0;
@@ -31,6 +33,10 @@ bool RegisterAllocator::allocate(std::vector<BasicBlockCode> &blocks) {
             recordUse(mi.rd);
             recordUse(mi.rs1);
             recordUse(mi.rs2);
+            if (mi.readsBothSources() && mi.rs1 != 0 && mi.rs2 != 0 && mi.rs1 != mi.rs2) {
+                ++partners[mi.rs1][mi.rs2];
+                ++partners[mi.rs2][mi.rs1];
+            }
 
             globalIdx++;
         }
@@ -46,12 +52,14 @@ bool RegisterAllocator::allocate(std::vector<BasicBlockCode> &blocks) {
         if (a.second.birth != b.second.birth) {
             return a.second.birth < b.second.birth;
         }
-        return a.second.death < b.second.death;
+        if (a.second.death != b.second.death) return a.second.death < b.second.death;
+        return a.first < b.first;
     });
 
-    // Step 3: Linear scan allocation using a free physical register pool (R1..R31)
+    // Step 3: Prefer a bank opposite already-assigned source partners.
+    // Keep one scratch in each bank for non-bipartite constraints / pressure.
     std::set<uint8_t> freePool;
-    for (uint8_t r = 1; r < NUM_PHYSICAL_REGS; r++) {
+    for (uint8_t r = 1; r < NUM_PHYSICAL_REGS - 2; r++) {
         freePool.insert(r);
     }
 
@@ -72,13 +80,23 @@ bool RegisterAllocator::allocate(std::vector<BasicBlockCode> &blocks) {
         }
 
         if (freePool.empty()) {
-            std::cerr << "Error: Register pressure too high, ran out of physical registers!\n";
+            std::cerr << "Error: Register pressure exceeds R1..R29; R30/R31 are reserved for bank repair (spilling is not supported).\n";
             return false;
         }
 
-        // Allocate smallest available physical register
+        // Ties retain the lowest physical index for deterministic output.
         uint8_t phys = *freePool.begin();
-        freePool.erase(freePool.begin());
+        unsigned bestCost = std::numeric_limits<unsigned>::max();
+        for (uint8_t candidate : freePool) {
+            unsigned cost = 0;
+            for (const auto &[other, weight] : partners[vreg]) {
+                auto assigned = vregToPhys.find(other);
+                if (assigned != vregToPhys.end() && ((assigned->second ^ candidate) & 1) == 0)
+                    cost += weight;
+            }
+            if (cost < bestCost) { bestCost = cost; phys = candidate; }
+        }
+        freePool.erase(phys);
 
         vregToPhys[vreg] = phys;
         active.emplace_back(range.death, vreg);
@@ -99,6 +117,39 @@ bool RegisterAllocator::allocate(std::vector<BasicBlockCode> &blocks) {
         }
     }
 
+    // Step 5: Resolve remaining conflicts before label/PC resolution. ADDI
+    // copies preserve active masks and do not change the arithmetic operands'
+    // order (essential for SUB, comparisons and stores).
+    for (auto &bb : blocks) {
+        std::vector<MachineInstruction> repaired;
+        for (auto mi : bb.instructions) {
+            if (mi.hasRegisterBankConflict()) {
+                MachineInstruction copy;
+                copy.op = Opcode::ADDI;
+                copy.rd = (mi.rs1 & 1) ? 30 : 31;
+                copy.rs1 = mi.rs2;
+                copy.imm = 0;
+                copy.comment = "odd/even bank repair";
+                mi.rs2 = copy.rd;
+                repaired.push_back(copy);
+            }
+            repaired.push_back(mi);
+        }
+        bb.instructions = std::move(repaired);
+    }
+    return verifyBanks(blocks);
+}
+
+bool RegisterAllocator::verifyBanks(const std::vector<BasicBlockCode> &blocks) {
+    for (const auto &bb : blocks) {
+        for (size_t i = 0; i < bb.instructions.size(); ++i) {
+            if (bb.instructions[i].hasRegisterBankConflict()) {
+                std::cerr << "Error: register bank conflict in " << bb.name
+                          << " instruction " << i << '\n';
+                return false;
+            }
+        }
+    }
     return true;
 }
 
