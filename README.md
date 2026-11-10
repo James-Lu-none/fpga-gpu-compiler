@@ -48,14 +48,19 @@ The compiler targets the custom 32-bit RISC ISA implemented in `rtl/sm/fetch_dec
 | :--- | :--- | :--- | :--- | :--- |
 | `0x01` | `ADD` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] + VRF[rs2]` |
 | `0x02` | `SUB` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] - VRF[rs2]` |
-| `0x03` | `MUL` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] * VRF[rs2]` |
-| `0x04` | `CMP` | R | `rs1, rs2` | Computes NZP condition codes |
+| `0x03` | `MUL` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] * VRF[rs2]` (low 32-bit) |
+| `0x04` | `CMP` | R | `rs1, rs2` | Comparison |
+| `0x05` | `AND` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] & VRF[rs2]` |
+| `0x06` | `OR` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] \| VRF[rs2]` |
+| `0x07` | `XOR` | R | `rd, rs1, rs2` | `VRF[rd] = VRF[rs1] ^ VRF[rs2]` |
+| `0x08` | `SETCC`| R | `rd, rs1, rs2, cond` | `VRF[rd] = eval(cond, rs1, rs2) ? 1 : 0` |
 | `0x81` | `ADDI` | I | `rd, rs1, imm14` | `VRF[rd] = VRF[rs1] + imm14` |
 | `0xA0` | `LDR` | I | `rd, [rs1]` | Load 64-bit word from memory into `rd` |
 | `0xA1` | `STR` | R | `rs2, [rs1]` | Store 64-bit word `rs2` to address `rs1` |
 | `0xB0` | `S2R` | I | `rd, SR_NAME` | Read hardware system register (`TID.X`, `TID.Y`, `BID.X`, `BID.Y`) |
-| `0xC0` | `BR` | J | `cond, target` | Branch if NZP condition matches (N, Z, P) |
+| `0xC0` | `BR` | J | `[rd,] target` | Branch if `rd == 0` (unconditional) or `VRF[rd] != 0` (conditional) |
 | `0xE0` | `SYNC` | J | - | Pop SIMT divergence stack for reconvergence |
+| `0xE1` | `SSY` | J | `target` | Push reconvergence PC target onto SIMT stack |
 | `0xFF` | `EXIT` | J | - | Terminate warp execution |
 
 ---
@@ -124,6 +129,15 @@ You can compile directly from an LLVM IR file (`.ll` or `.bc`):
 # Disassemble a hex file back to assembly
 ./build/fpgagpu-llc -d kernel.hex -o kernel_disasm.s
 ```
+
+---
+
+## Control Flow & Branch Lowering (SIMT Divergence)
+
+The compiler backend features an integrated SIMT divergence analysis pass (`runDivergencePass`):
+1. **Immediate Post-Dominator (IPD) Analysis**: Identifies branch reconvergence targets via Post-Dominator Tree (`llvm::PostDominatorTree`).
+2. **SSY & SYNC Insertion**: Automatically places `SSY <IPD>` before conditional branches, and `SYNC` instructions before the reconvergence point (`IPD`) on diverging paths.
+3. **Register-Based Predicates & Boolean Evaluation (`SETCC`, `AND`, `OR`, `XOR`)**: The FPGA-GPU architecture supports vector bitwise logic (`AND`, `OR`, `XOR`) and condition evaluation into vector registers (`SETCC rd, rs1, rs2, cond`). All comparisons evaluate directly into registers (producing 0 or 1), and compound boolean predicates (`if (a && b && c ...)`) naturally compose in dataflow via `AND`/`OR` instructions. A conditional branch simply evaluates `condReg != 0`, triggering exactly one branch and at most one SIMT stack divergence event, eliminating multi-stage branch serialization.
 
 ---
 
