@@ -169,12 +169,30 @@ bool Assembler::parseLine(const std::string &rawLine, size_t lineNum,
             else mi.imm = std::stoi(tokens[2], nullptr, 0) & 0x3FFF;
         } else if (mnemonic == "BR") {
             mi.op = Opcode::BR;
-            mi.cond = parseCondition(tokens[1]);
-            // Can be label target or raw integer offset
-            try {
-                mi.imm = std::stoi(tokens[2], nullptr, 0);
-            } catch (...) {
-                mi.labelTarget = tokens[2];
+            if (tokens.size() == 2) {
+                // BR <target> (unconditional branch, rd = 0)
+                mi.rd = 0;
+                try {
+                    mi.imm = std::stoi(tokens[1], nullptr, 0);
+                } catch (...) {
+                    mi.labelTarget = tokens[1];
+                }
+            } else if (tokens.size() >= 3) {
+                // Conditional branch: BR R<rd>, <target>
+                // Or legacy syntax: BR <cond>, <target>
+                if (tokens[1].size() > 1 && (tokens[1][0] == 'R' || tokens[1][0] == 'r') && std::isdigit(tokens[1][1])) {
+                    mi.rd = parseRegister(tokens[1]);
+                } else {
+                    // Legacy condition (e.g. ALWAYS, NZP): treat as unconditional rd = 0
+                    mi.rd = 0;
+                }
+                try {
+                    mi.imm = std::stoi(tokens[2], nullptr, 0);
+                } catch (...) {
+                    mi.labelTarget = tokens[2];
+                }
+            } else {
+                throw std::runtime_error("BR requires at least one target argument");
             }
         } else if (mnemonic == "SYNC") {
             mi.op = Opcode::SYNC;
