@@ -16,18 +16,22 @@ constexpr uint32_t LANE_WIDTH_BITS = 32;
 
 // Hardware Instruction Opcodes (8-bit)
 enum class Opcode : uint8_t {
-    ADD  = 0x01, // R-Type: VRF[rd] = VRF[rs1] + VRF[rs2]
-    SUB  = 0x02, // R-Type: VRF[rd] = VRF[rs1] - VRF[rs2]
-    MUL  = 0x03, // R-Type: VRF[rd] = VRF[rs1] * VRF[rs2]
-    CMP  = 0x04, // R-Type: NZP = VRF[rs1] - VRF[rs2]
-    ADDI = 0x81, // I-Type: VRF[rd] = VRF[rs1] + imm14
-    LDR  = 0xA0, // I-Type: VRF[rd] = Mem[VRF[rs1]]
-    STR  = 0xA1, // R-Type: Mem[VRF[rs1]] = VRF[rs2]
-    S2R  = 0xB0, // I-Type: VRF[rd] = SysReg[imm]
-    BR   = 0xC0, // J-Type: if (NZP & cond) PC += imm19
-    SYNC = 0xE0, // J-Type: Pop SIMT Stack (Reconvergence)
-    SSY  = 0xE1, // J-Type: Push Reconvergence PC to SIMT Stack
-    EXIT = 0xFF  // J-Type: Terminate Warp
+    ADD   = 0x01, // R-Type: VRF[rd] = VRF[rs1] + VRF[rs2]
+    SUB   = 0x02, // R-Type: VRF[rd] = VRF[rs1] - VRF[rs2]
+    MUL   = 0x03, // R-Type: VRF[rd] = VRF[rs1] * VRF[rs2]
+    CMP   = 0x04, // R-Type: NZP = VRF[rs1] - VRF[rs2]
+    AND   = 0x05, // R-Type: VRF[rd] = VRF[rs1] & VRF[rs2]
+    OR    = 0x06, // R-Type: VRF[rd] = VRF[rs1] | VRF[rs2]
+    XOR   = 0x07, // R-Type: VRF[rd] = VRF[rs1] ^ VRF[rs2]
+    SETCC = 0x08, // R-Type: VRF[rd] = (VRF[rs1] cond VRF[rs2]) ? 1 : 0
+    ADDI  = 0x81, // I-Type: VRF[rd] = VRF[rs1] + imm14
+    LDR   = 0xA0, // I-Type: VRF[rd] = Mem[VRF[rs1]]
+    STR   = 0xA1, // R-Type: Mem[VRF[rs1]] = VRF[rs2]
+    S2R   = 0xB0, // I-Type: VRF[rd] = SysReg[imm]
+    BR    = 0xC0, // J-Type: if (NZP & cond) PC += imm19
+    SYNC  = 0xE0, // J-Type: Pop SIMT Stack (Reconvergence)
+    SSY   = 0xE1, // J-Type: Push Reconvergence PC to SIMT Stack
+    EXIT  = 0xFF  // J-Type: Terminate Warp
 };
 
 // System Registers for S2R Instruction
@@ -83,10 +87,20 @@ struct MachineInstruction {
             case Opcode::ADD:
             case Opcode::SUB:
             case Opcode::MUL:
+            case Opcode::AND:
+            case Opcode::OR:
+            case Opcode::XOR:
                 return (opcodeVal << 24) |
                        ((static_cast<uint32_t>(rd) & 0x1F) << 19) |
                        ((static_cast<uint32_t>(rs1) & 0x1F) << 14) |
                        ((static_cast<uint32_t>(rs2) & 0x1F) << 9);
+
+            case Opcode::SETCC:
+                return (opcodeVal << 24) |
+                       ((static_cast<uint32_t>(rd) & 0x1F) << 19) |
+                       ((static_cast<uint32_t>(rs1) & 0x1F) << 14) |
+                       ((static_cast<uint32_t>(rs2) & 0x1F) << 9) |
+                       ((static_cast<uint32_t>(cond) & 0x07) << 6);
 
             case Opcode::CMP:
                 return (opcodeVal << 24) |
