@@ -362,50 +362,33 @@ void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbC
     if (BI.isUnconditional()) {
         MachineInstruction mi;
         mi.op = Opcode::BR;
-        mi.cond = BranchCond::ALWAYS;
+        mi.rd = 0; // R0 => Unconditional branch
         mi.labelTarget = blockNames[BI.getSuccessor(0)];
         mi.comment = "unconditional branch";
         bbCode.instructions.push_back(mi);
-    } else {
-        // Conditional Branch
-        llvm::Value *condVal = BI.getCondition();
-        uint8_t branchCond = BranchCond::NE; // default != 0
-
-        if (auto *CI = llvm::dyn_cast<llvm::ICmpInst>(condVal)) {
-            // ADD/SUB/address arithmetic also updates NZP. Emit the predicate
-            // at its branch use so intervening instructions cannot clobber it.
-            selectCmp(*CI, bbCode);
-            switch (CI->getPredicate()) {
-                case llvm::CmpInst::ICMP_EQ:  branchCond = BranchCond::EQ; break;
-                case llvm::CmpInst::ICMP_NE:  branchCond = BranchCond::NE; break;
-                case llvm::CmpInst::ICMP_SLT:
-                case llvm::CmpInst::ICMP_ULT: branchCond = BranchCond::LT; break;
-                case llvm::CmpInst::ICMP_SLE:
-                case llvm::CmpInst::ICMP_ULE: branchCond = BranchCond::LE; break;
-                case llvm::CmpInst::ICMP_SGT:
-                case llvm::CmpInst::ICMP_UGT: branchCond = BranchCond::GT; break;
-                case llvm::CmpInst::ICMP_SGE:
-                case llvm::CmpInst::ICMP_UGE: branchCond = BranchCond::GE; break;
-                default:                      branchCond = BranchCond::NE; break;
-            }
-        }
-
-        // Branch to True target if condition holds
-        MachineInstruction miTrue;
-        miTrue.op = Opcode::BR;
-        miTrue.cond = branchCond;
-        miTrue.labelTarget = blockNames[BI.getSuccessor(0)];
-        miTrue.comment = "branch taken";
-        bbCode.instructions.push_back(miTrue);
-
-        // Followed by Unconditional Branch to False target
-        MachineInstruction miFalse;
-        miFalse.op = Opcode::BR;
-        miFalse.cond = BranchCond::ALWAYS;
-        miFalse.labelTarget = blockNames[BI.getSuccessor(1)];
-        miFalse.comment = "branch fallthrough/else";
-        bbCode.instructions.push_back(miFalse);
+        return;
     }
+
+    // Direct register-based branching:
+    // If condReg != 0, lane branches to True target.
+    // Hardware evaluates (ex1_rd == 0 ? 1 : ex1_rs1_data[lane] != 0).
+    VReg condReg = getOrMaterializeVReg(BI.getCondition(), bbCode);
+
+    // Branch to True target if condition holds (VRF[condReg] != 0)
+    MachineInstruction miTrue;
+    miTrue.op = Opcode::BR;
+    miTrue.rd = condReg;
+    miTrue.labelTarget = blockNames[BI.getSuccessor(0)];
+    miTrue.comment = "branch taken (condReg != 0)";
+    bbCode.instructions.push_back(miTrue);
+
+    // Unconditional branch to False target (R0 => unconditional)
+    MachineInstruction miFalse;
+    miFalse.op = Opcode::BR;
+    miFalse.rd = 0;
+    miFalse.labelTarget = blockNames[BI.getSuccessor(1)];
+    miFalse.comment = "branch fallthrough/else (R0 => unconditional)";
+    bbCode.instructions.push_back(miFalse);
 }
 
 void InstructionSelector::selectLoad(llvm::LoadInst &LI, BasicBlockCode &bbCode) {
