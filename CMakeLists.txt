@@ -50,4 +50,12 @@ if(BUILD_TESTING)
         src/FpgaGpuAssembler.cpp
     )
     add_test(NAME assembler-ssy COMMAND assembler-ssy-test)
+    add_executable(register-banks-test
+        tests/register_banks_test.cpp
+        src/FpgaGpuRegAlloc.cpp
+        src/FpgaGpuAssembler.cpp
+        src/FpgaGpuEmitter.cpp
+    )
+    target_link_libraries(register-banks-test PRIVATE ${LLVM_LIBS})
+    add_test(NAME register-banks COMMAND register-banks-test)
 endif()
