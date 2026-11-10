@@ -325,6 +325,39 @@ void InstructionSelector::selectCmp(llvm::ICmpInst &CI, BasicBlockCode &bbCode) 
     bbCode.instructions.push_back(mi);
 }
 
+void InstructionSelector::selectSelect(llvm::SelectInst &SI, BasicBlockCode &bbCode) {
+    VReg rd = getOrCreateVReg(&SI);
+    VReg condReg = getOrMaterializeVReg(SI.getCondition(), bbCode);
+    auto *falseVal = llvm::dyn_cast<llvm::ConstantInt>(SI.getFalseValue());
+    auto *trueVal = llvm::dyn_cast<llvm::ConstantInt>(SI.getTrueValue());
+
+    if (falseVal && falseVal->isZero()) { // select i1 %cond, i1 %b, i1 false
+        MachineInstruction mi;
+        mi.op = Opcode::AND;
+        mi.rd = rd;
+        mi.rs1 = condReg;
+        mi.rs2 = getOrMaterializeVReg(SI.getTrueValue(), bbCode);
+        mi.comment = "select -> and";
+        bbCode.instructions.push_back(mi);
+    } else if (trueVal && trueVal->isOne()) { // select i1 %cond, i1 true, i1 %b
+        MachineInstruction mi;
+        mi.op = Opcode::OR;
+        mi.rd = rd;
+        mi.rs1 = condReg;
+        mi.rs2 = getOrMaterializeVReg(SI.getFalseValue(), bbCode);
+        mi.comment = "select -> or";
+        bbCode.instructions.push_back(mi);
+    } else {
+        MachineInstruction mi;
+        mi.op = Opcode::AND;
+        mi.rd = rd;
+        mi.rs1 = condReg;
+        mi.rs2 = getOrMaterializeVReg(SI.getTrueValue(), bbCode);
+        mi.comment = "select fallback";
+        bbCode.instructions.push_back(mi);
+    }
+}
+
 void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbCode) {
     if (BI.isUnconditional()) {
         MachineInstruction mi;
