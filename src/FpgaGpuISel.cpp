@@ -111,14 +111,9 @@ void InstructionSelector::selectInstruction(llvm::Instruction &I, BasicBlockCode
     if (auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(&I)) {
         selectBinaryOp(*BO, bbCode);
     } else if (auto *CI = llvm::dyn_cast<llvm::ICmpInst>(&I)) {
-        // Branch-only predicates are emitted at each branch use, keeping CMP
-        // adjacent to BR and avoiding an unused earlier NZP update.
-        const bool branchOnly = std::all_of(CI->user_begin(), CI->user_end(),
-            [](llvm::User *user) {
-                auto *branch = llvm::dyn_cast<llvm::BranchInst>(user);
-                return branch && branch->isConditional();
-            });
-        if (!branchOnly) selectCmp(*CI, bbCode);
+        selectCmp(*CI, bbCode);
+    } else if (auto *SI = llvm::dyn_cast<llvm::SelectInst>(&I)) {
+        selectSelect(*SI, bbCode);
     } else if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(&I)) {
         selectBranch(*BI, bbCode);
     } else if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&I)) {
@@ -304,12 +299,29 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
 }
 
 void InstructionSelector::selectCmp(llvm::ICmpInst &CI, BasicBlockCode &bbCode) {
-    // CMP rs1, rs2 (updates NZP condition codes in ALU)
+    auto getBranchCond = [](llvm::CmpInst::Predicate pred) -> uint8_t {
+        switch (pred) {
+            case llvm::CmpInst::ICMP_EQ:  return BranchCond::EQ;
+            case llvm::CmpInst::ICMP_NE:  return BranchCond::NE;
+            case llvm::CmpInst::ICMP_SLT:
+            case llvm::CmpInst::ICMP_ULT: return BranchCond::LT;
+            case llvm::CmpInst::ICMP_SLE:
+            case llvm::CmpInst::ICMP_ULE: return BranchCond::LE;
+            case llvm::CmpInst::ICMP_SGT:
+            case llvm::CmpInst::ICMP_UGT: return BranchCond::GT;
+            case llvm::CmpInst::ICMP_SGE:
+            case llvm::CmpInst::ICMP_UGE: return BranchCond::GE;
+            default:                      return BranchCond::NE;
+        }
+    };
+
     MachineInstruction mi;
-    mi.op = Opcode::CMP;
+    mi.op = Opcode::SETCC;
+    mi.rd = getOrCreateVReg(&CI);
     mi.rs1 = getOrMaterializeVReg(CI.getOperand(0), bbCode);
     mi.rs2 = getOrMaterializeVReg(CI.getOperand(1), bbCode);
-    mi.comment = "cmp";
+    mi.cond = getBranchCond(CI.getPredicate());
+    mi.comment = "setcc";
     bbCode.instructions.push_back(mi);
 }
 
