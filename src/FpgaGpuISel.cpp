@@ -287,6 +287,27 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
             mi.comment = "shl fallback mul";
             break;
         }
+        case llvm::Instruction::And: {
+            mi.op = Opcode::AND;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "and";
+            break;
+        }
+        case llvm::Instruction::Or: {
+            mi.op = Opcode::OR;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "or";
+            break;
+        }
+        case llvm::Instruction::Xor: {
+            mi.op = Opcode::XOR;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "xor";
+            break;
+        }
         default:
             // Fallback to ADD
             mi.op = Opcode::ADD;
