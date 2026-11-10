@@ -132,7 +132,7 @@ struct MachineInstruction {
 
             case Opcode::BR:
                 return (opcodeVal << 24) |
-                       ((static_cast<uint32_t>(cond) & 0x7) << 19) |
+                       ((static_cast<uint32_t>(rd) & 0x1F) << 19) |
                        (static_cast<uint32_t>(imm) & 0x7FFFF);
 
             case Opcode::SSY:
