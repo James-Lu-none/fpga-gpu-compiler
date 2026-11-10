@@ -45,6 +45,7 @@ private:
     // Handlers for specific instruction types
     void selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCode &bbCode);
     void selectCmp(llvm::ICmpInst &CI, BasicBlockCode &bbCode);
+    void selectSelect(llvm::SelectInst &SI, BasicBlockCode &bbCode);
     void selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbCode);
     void selectLoad(llvm::LoadInst &LI, BasicBlockCode &bbCode);
     void selectStore(llvm::StoreInst &SI, BasicBlockCode &bbCode);

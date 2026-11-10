@@ -138,6 +138,70 @@ bool Assembler::parseLine(const std::string &rawLine, size_t lineNum,
             mi.op = Opcode::CMP;
             mi.rs1 = parseRegister(tokens[1]);
             mi.rs2 = parseRegister(tokens[2]);
+        } else if (mnemonic == "AND") {
+            mi.op = Opcode::AND;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "OR") {
+            mi.op = Opcode::OR;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "XOR") {
+            mi.op = Opcode::XOR;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic.rfind("SETCC", 0) == 0) {
+            mi.op = Opcode::SETCC;
+            auto dotPos = mnemonic.find('.');
+            if (dotPos != std::string::npos) {
+                mi.cond = parseCondition(mnemonic.substr(dotPos + 1));
+            } else if (tokens.size() > 4) {
+                mi.cond = parseCondition(tokens[4]);
+            } else {
+                mi.cond = BranchCond::LT;
+            }
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "SLT") {
+            mi.op = Opcode::SETCC;
+            mi.cond = BranchCond::LT;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "SEQ") {
+            mi.op = Opcode::SETCC;
+            mi.cond = BranchCond::EQ;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "SNE") {
+            mi.op = Opcode::SETCC;
+            mi.cond = BranchCond::NE;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "SGT") {
+            mi.op = Opcode::SETCC;
+            mi.cond = BranchCond::GT;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "SGE") {
+            mi.op = Opcode::SETCC;
+            mi.cond = BranchCond::GE;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
+        } else if (mnemonic == "SLE") {
+            mi.op = Opcode::SETCC;
+            mi.cond = BranchCond::LE;
+            mi.rd = parseRegister(tokens[1]);
+            mi.rs1 = parseRegister(tokens[2]);
+            mi.rs2 = parseRegister(tokens[3]);
         } else if (mnemonic == "ADDI") {
             mi.op = Opcode::ADDI;
             mi.rd = parseRegister(tokens[1]);
@@ -169,12 +233,30 @@ bool Assembler::parseLine(const std::string &rawLine, size_t lineNum,
             else mi.imm = std::stoi(tokens[2], nullptr, 0) & 0x3FFF;
         } else if (mnemonic == "BR") {
             mi.op = Opcode::BR;
-            mi.cond = parseCondition(tokens[1]);
-            // Can be label target or raw integer offset
-            try {
-                mi.imm = std::stoi(tokens[2], nullptr, 0);
-            } catch (...) {
-                mi.labelTarget = tokens[2];
+            if (tokens.size() == 2) {
+                // BR <target> (unconditional branch, rd = 0)
+                mi.rd = 0;
+                try {
+                    mi.imm = std::stoi(tokens[1], nullptr, 0);
+                } catch (...) {
+                    mi.labelTarget = tokens[1];
+                }
+            } else if (tokens.size() >= 3) {
+                // Conditional branch: BR R<rd>, <target>
+                // Or legacy syntax: BR <cond>, <target>
+                if (tokens[1].size() > 1 && (tokens[1][0] == 'R' || tokens[1][0] == 'r') && std::isdigit(tokens[1][1])) {
+                    mi.rd = parseRegister(tokens[1]);
+                } else {
+                    // Legacy condition (e.g. ALWAYS, NZP): treat as unconditional rd = 0
+                    mi.rd = 0;
+                }
+                try {
+                    mi.imm = std::stoi(tokens[2], nullptr, 0);
+                } catch (...) {
+                    mi.labelTarget = tokens[2];
+                }
+            } else {
+                throw std::runtime_error("BR requires at least one target argument");
             }
         } else if (mnemonic == "SYNC") {
             mi.op = Opcode::SYNC;
@@ -226,6 +308,19 @@ std::string Assembler::disassemble(uint32_t word) {
         case Opcode::SUB:  oss << "SUB R" << (int)rd << ", R" << (int)rs1 << ", R" << (int)rs2; break;
         case Opcode::MUL:  oss << "MUL R" << (int)rd << ", R" << (int)rs1 << ", R" << (int)rs2; break;
         case Opcode::CMP:  oss << "CMP R" << (int)rs1 << ", R" << (int)rs2; break;
+        case Opcode::AND:  oss << "AND R" << (int)rd << ", R" << (int)rs1 << ", R" << (int)rs2; break;
+        case Opcode::OR:   oss << "OR R" << (int)rd << ", R" << (int)rs1 << ", R" << (int)rs2; break;
+        case Opcode::XOR:  oss << "XOR R" << (int)rd << ", R" << (int)rs1 << ", R" << (int)rs2; break;
+        case Opcode::SETCC: {
+            uint8_t c = (word >> 6) & 0x7;
+            std::string cStr;
+            if (c & BranchCond::N) cStr += "N";
+            if (c & BranchCond::Z) cStr += "Z";
+            if (c & BranchCond::P) cStr += "P";
+            if (cStr.empty()) cStr = "NEVER";
+            oss << "SETCC." << cStr << " R" << (int)rd << ", R" << (int)rs1 << ", R" << (int)rs2;
+            break;
+        }
         case Opcode::ADDI: oss << "ADDI R" << (int)rd << ", R" << (int)rs1 << ", " << imm14; break;
         case Opcode::LDR:  oss << "LDR R" << (int)rd << ", [R" << (int)rs1 << "]"; break;
         case Opcode::STR:  oss << "STR R" << (int)rs2 << ", [R" << (int)rs1 << "]"; break;
@@ -241,12 +336,11 @@ std::string Assembler::disassemble(uint32_t word) {
             break;
         }
         case Opcode::BR: {
-            oss << "BR ";
-            if (cond & BranchCond::N) oss << "N";
-            if (cond & BranchCond::Z) oss << "Z";
-            if (cond & BranchCond::P) oss << "P";
-            if (cond == 0) oss << "NEVER";
-            oss << ", " << imm19;
+            if (rd == 0) {
+                oss << "BR " << imm19;
+            } else {
+                oss << "BR R" << (int)rd << ", " << imm19;
+            }
             break;
         }
         case Opcode::SYNC: oss << "SYNC"; break;

@@ -80,6 +80,18 @@ void CodeEmitter::emitAssembly(std::ostream &os) {
                 case Opcode::CMP:
                     os << "CMP R" << (int)mi.rs1 << ", R" << (int)mi.rs2;
                     break;
+                case Opcode::AND:
+                    os << "AND R" << (int)mi.rd << ", R" << (int)mi.rs1 << ", R" << (int)mi.rs2;
+                    break;
+                case Opcode::OR:
+                    os << "OR R" << (int)mi.rd << ", R" << (int)mi.rs1 << ", R" << (int)mi.rs2;
+                    break;
+                case Opcode::XOR:
+                    os << "XOR R" << (int)mi.rd << ", R" << (int)mi.rs1 << ", R" << (int)mi.rs2;
+                    break;
+                case Opcode::SETCC:
+                    os << "SETCC." << condToString(mi.cond) << " R" << (int)mi.rd << ", R" << (int)mi.rs1 << ", R" << (int)mi.rs2;
+                    break;
                 case Opcode::ADDI:
                     os << "ADDI R" << (int)mi.rd << ", R" << (int)mi.rs1 << ", " << mi.imm;
                     break;
@@ -93,8 +105,12 @@ void CodeEmitter::emitAssembly(std::ostream &os) {
                     os << "S2R R" << (int)mi.rd << ", " << sysRegToString(mi.imm);
                     break;
                 case Opcode::BR:
-                    os << "BR " << condToString(mi.cond) << ", "
-                       << (mi.labelTarget.empty() ? std::to_string(mi.imm) : mi.labelTarget);
+                    if (mi.rd == 0) {
+                        os << "BR " << (mi.labelTarget.empty() ? std::to_string(mi.imm) : mi.labelTarget);
+                    } else {
+                        os << "BR R" << (int)mi.rd << ", "
+                           << (mi.labelTarget.empty() ? std::to_string(mi.imm) : mi.labelTarget);
+                    }
                     break;
                 case Opcode::SYNC:
                     os << "SYNC";

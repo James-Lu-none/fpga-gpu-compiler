@@ -32,8 +32,12 @@ int main() {
     // A leading EXIT makes the SSY PC nonzero, distinguishing relative from absolute.
     ok &= expect("start: EXIT\nSSY end\nSSY start\nend: SYNC\n",
                  {0xFF000000, 0xE1000002, 0xE107FFFE, 0xE0000000});
-    ok &= expect("self: SSY self ; zero offset\nBR NZP, self\n",
-                 {0xE1000000, 0xC03FFFFF});
+    ok &= expect("self: SSY self ; zero offset\nBR self\n",
+                 {0xE1000000, 0xC007FFFF});
+    ok &= expect("BR R1, 0\n",
+                 {0xC0080000});
+    ok &= expect("BR NZP, 0\n",
+                 {0xC0000000});
     ok &= reject("SSY missing\n");
     ok &= reject("SSY\n");
     ok &= reject("SSY 1 extra\n");

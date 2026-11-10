@@ -111,14 +111,9 @@ void InstructionSelector::selectInstruction(llvm::Instruction &I, BasicBlockCode
     if (auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(&I)) {
         selectBinaryOp(*BO, bbCode);
     } else if (auto *CI = llvm::dyn_cast<llvm::ICmpInst>(&I)) {
-        // Branch-only predicates are emitted at each branch use, keeping CMP
-        // adjacent to BR and avoiding an unused earlier NZP update.
-        const bool branchOnly = std::all_of(CI->user_begin(), CI->user_end(),
-            [](llvm::User *user) {
-                auto *branch = llvm::dyn_cast<llvm::BranchInst>(user);
-                return branch && branch->isConditional();
-            });
-        if (!branchOnly) selectCmp(*CI, bbCode);
+        selectCmp(*CI, bbCode);
+    } else if (auto *SI = llvm::dyn_cast<llvm::SelectInst>(&I)) {
+        selectSelect(*SI, bbCode);
     } else if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(&I)) {
         selectBranch(*BI, bbCode);
     } else if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&I)) {
@@ -292,6 +287,27 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
             mi.comment = "shl fallback mul";
             break;
         }
+        case llvm::Instruction::And: {
+            mi.op = Opcode::AND;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "and";
+            break;
+        }
+        case llvm::Instruction::Or: {
+            mi.op = Opcode::OR;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "or";
+            break;
+        }
+        case llvm::Instruction::Xor: {
+            mi.op = Opcode::XOR;
+            mi.rs1 = getOrMaterializeVReg(op0, bbCode);
+            mi.rs2 = getOrMaterializeVReg(op1, bbCode);
+            mi.comment = "xor";
+            break;
+        }
         default:
             // Fallback to ADD
             mi.op = Opcode::ADD;
@@ -304,63 +320,96 @@ void InstructionSelector::selectBinaryOp(llvm::BinaryOperator &BO, BasicBlockCod
 }
 
 void InstructionSelector::selectCmp(llvm::ICmpInst &CI, BasicBlockCode &bbCode) {
-    // CMP rs1, rs2 (updates NZP condition codes in ALU)
+    auto getBranchCond = [](llvm::CmpInst::Predicate pred) -> uint8_t {
+        switch (pred) {
+            case llvm::CmpInst::ICMP_EQ:  return BranchCond::EQ;
+            case llvm::CmpInst::ICMP_NE:  return BranchCond::NE;
+            case llvm::CmpInst::ICMP_SLT:
+            case llvm::CmpInst::ICMP_ULT: return BranchCond::LT;
+            case llvm::CmpInst::ICMP_SLE:
+            case llvm::CmpInst::ICMP_ULE: return BranchCond::LE;
+            case llvm::CmpInst::ICMP_SGT:
+            case llvm::CmpInst::ICMP_UGT: return BranchCond::GT;
+            case llvm::CmpInst::ICMP_SGE:
+            case llvm::CmpInst::ICMP_UGE: return BranchCond::GE;
+            default:                      return BranchCond::NE;
+        }
+    };
+
     MachineInstruction mi;
-    mi.op = Opcode::CMP;
+    mi.op = Opcode::SETCC;
+    mi.rd = getOrCreateVReg(&CI);
     mi.rs1 = getOrMaterializeVReg(CI.getOperand(0), bbCode);
     mi.rs2 = getOrMaterializeVReg(CI.getOperand(1), bbCode);
-    mi.comment = "cmp";
+    mi.cond = getBranchCond(CI.getPredicate());
+    mi.comment = "setcc";
     bbCode.instructions.push_back(mi);
+}
+
+void InstructionSelector::selectSelect(llvm::SelectInst &SI, BasicBlockCode &bbCode) {
+    VReg rd = getOrCreateVReg(&SI);
+    VReg condReg = getOrMaterializeVReg(SI.getCondition(), bbCode);
+    auto *falseVal = llvm::dyn_cast<llvm::ConstantInt>(SI.getFalseValue());
+    auto *trueVal = llvm::dyn_cast<llvm::ConstantInt>(SI.getTrueValue());
+
+    if (falseVal && falseVal->isZero()) { // select i1 %cond, i1 %b, i1 false
+        MachineInstruction mi;
+        mi.op = Opcode::AND;
+        mi.rd = rd;
+        mi.rs1 = condReg;
+        mi.rs2 = getOrMaterializeVReg(SI.getTrueValue(), bbCode);
+        mi.comment = "select -> and";
+        bbCode.instructions.push_back(mi);
+    } else if (trueVal && trueVal->isOne()) { // select i1 %cond, i1 true, i1 %b
+        MachineInstruction mi;
+        mi.op = Opcode::OR;
+        mi.rd = rd;
+        mi.rs1 = condReg;
+        mi.rs2 = getOrMaterializeVReg(SI.getFalseValue(), bbCode);
+        mi.comment = "select -> or";
+        bbCode.instructions.push_back(mi);
+    } else {
+        MachineInstruction mi;
+        mi.op = Opcode::AND;
+        mi.rd = rd;
+        mi.rs1 = condReg;
+        mi.rs2 = getOrMaterializeVReg(SI.getTrueValue(), bbCode);
+        mi.comment = "select fallback";
+        bbCode.instructions.push_back(mi);
+    }
 }
 
 void InstructionSelector::selectBranch(llvm::BranchInst &BI, BasicBlockCode &bbCode) {
     if (BI.isUnconditional()) {
         MachineInstruction mi;
         mi.op = Opcode::BR;
-        mi.cond = BranchCond::ALWAYS;
+        mi.rd = 0; // R0 => Unconditional branch
         mi.labelTarget = blockNames[BI.getSuccessor(0)];
         mi.comment = "unconditional branch";
         bbCode.instructions.push_back(mi);
-    } else {
-        // Conditional Branch
-        llvm::Value *condVal = BI.getCondition();
-        uint8_t branchCond = BranchCond::NE; // default != 0
-
-        if (auto *CI = llvm::dyn_cast<llvm::ICmpInst>(condVal)) {
-            // ADD/SUB/address arithmetic also updates NZP. Emit the predicate
-            // at its branch use so intervening instructions cannot clobber it.
-            selectCmp(*CI, bbCode);
-            switch (CI->getPredicate()) {
-                case llvm::CmpInst::ICMP_EQ:  branchCond = BranchCond::EQ; break;
-                case llvm::CmpInst::ICMP_NE:  branchCond = BranchCond::NE; break;
-                case llvm::CmpInst::ICMP_SLT:
-                case llvm::CmpInst::ICMP_ULT: branchCond = BranchCond::LT; break;
-                case llvm::CmpInst::ICMP_SLE:
-                case llvm::CmpInst::ICMP_ULE: branchCond = BranchCond::LE; break;
-                case llvm::CmpInst::ICMP_SGT:
-                case llvm::CmpInst::ICMP_UGT: branchCond = BranchCond::GT; break;
-                case llvm::CmpInst::ICMP_SGE:
-                case llvm::CmpInst::ICMP_UGE: branchCond = BranchCond::GE; break;
-                default:                      branchCond = BranchCond::NE; break;
-            }
-        }
-
-        // Branch to True target if condition holds
-        MachineInstruction miTrue;
-        miTrue.op = Opcode::BR;
-        miTrue.cond = branchCond;
-        miTrue.labelTarget = blockNames[BI.getSuccessor(0)];
-        miTrue.comment = "branch taken";
-        bbCode.instructions.push_back(miTrue);
-
-        // Followed by Unconditional Branch to False target
-        MachineInstruction miFalse;
-        miFalse.op = Opcode::BR;
-        miFalse.cond = BranchCond::ALWAYS;
-        miFalse.labelTarget = blockNames[BI.getSuccessor(1)];
-        miFalse.comment = "branch fallthrough/else";
-        bbCode.instructions.push_back(miFalse);
+        return;
     }
+
+    // Direct register-based branching:
+    // If condReg != 0, lane branches to True target.
+    // Hardware evaluates (ex1_rd == 0 ? 1 : ex1_rs1_data[lane] != 0).
+    VReg condReg = getOrMaterializeVReg(BI.getCondition(), bbCode);
+
+    // Branch to True target if condition holds (VRF[condReg] != 0)
+    MachineInstruction miTrue;
+    miTrue.op = Opcode::BR;
+    miTrue.rd = condReg;
+    miTrue.labelTarget = blockNames[BI.getSuccessor(0)];
+    miTrue.comment = "branch taken (condReg != 0)";
+    bbCode.instructions.push_back(miTrue);
+
+    // Unconditional branch to False target (R0 => unconditional)
+    MachineInstruction miFalse;
+    miFalse.op = Opcode::BR;
+    miFalse.rd = 0;
+    miFalse.labelTarget = blockNames[BI.getSuccessor(1)];
+    miFalse.comment = "branch fallthrough/else (R0 => unconditional)";
+    bbCode.instructions.push_back(miFalse);
 }
 
 void InstructionSelector::selectLoad(llvm::LoadInst &LI, BasicBlockCode &bbCode) {
