@@ -36,19 +36,49 @@ __attribute__((always_inline)) static inline uint32_t get_group_id(uint32_t dim)
     return val;
 }
 
+#ifndef BLOCK_DIM_X
+#define BLOCK_DIM_X 2
+#endif
+#ifndef BLOCK_DIM_Y
+#define BLOCK_DIM_Y 1
+#endif
+
 // Global ID = group_id * block_dim + local_id
-// Hardware configuration: 2 threads per block in base SIMD lane configuration
 __attribute__((always_inline)) static inline uint32_t get_global_id(uint32_t dim) {
     uint32_t tid, bid;
     if (dim == 0) {
         __asm__ volatile ("s2r %0, SR_TID.X" : "=r"(tid));
         __asm__ volatile ("s2r %0, SR_BID.X" : "=r"(bid));
+#if BLOCK_DIM_X == 1
+        return bid + tid;
+#elif BLOCK_DIM_X == 2
         return (bid + bid) + tid;
+#elif BLOCK_DIM_X == 4
+        return (bid << 2) + tid;
+#elif BLOCK_DIM_X == 8
+        return (bid << 3) + tid;
+#elif BLOCK_DIM_X == 16
+        return (bid << 4) + tid;
+#else
+        return (bid * BLOCK_DIM_X) + tid;
+#endif
     } else {
         uint32_t tid, bid;
         __asm__ volatile ("s2r %0, SR_TID.Y" : "=r"(tid));
         __asm__ volatile ("s2r %0, SR_BID.Y" : "=r"(bid));
+#if BLOCK_DIM_Y == 1
         return bid + tid;
+#elif BLOCK_DIM_Y == 2
+        return (bid + bid) + tid;
+#elif BLOCK_DIM_Y == 4
+        return (bid << 2) + tid;
+#elif BLOCK_DIM_Y == 8
+        return (bid << 3) + tid;
+#elif BLOCK_DIM_Y == 16
+        return (bid << 4) + tid;
+#else
+        return (bid * BLOCK_DIM_Y) + tid;
+#endif
     }
 }
 
